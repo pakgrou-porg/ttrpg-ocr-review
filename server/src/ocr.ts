@@ -100,13 +100,19 @@ export async function runUnlimitedOcr(input: RunOcrInput): Promise<UnlimitedOcrR
   return result;
 }
 
-export async function testProviderConnection(
-  provider: ProviderConfig,
+interface ListModelsInput {
+  baseUrl: string;
+  apiPrefix?: string;
+  apiKey?: string;
+}
+
+export async function listModels(
+  input: ListModelsInput,
 ): Promise<{ ok: boolean; models?: string[]; error?: string }> {
   try {
-    const url = `${provider.baseUrl}${provider.apiPrefix}/models`;
+    const url = `${input.baseUrl}${input.apiPrefix?.trim() || "/v1"}/models`;
     const res = await fetch(url, {
-      headers: provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {},
+      headers: input.apiKey ? { Authorization: `Bearer ${input.apiKey}` } : {},
     });
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
     const json = (await res.json()) as { data?: Array<{ id?: string }> };
@@ -117,4 +123,10 @@ export async function testProviderConnection(
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+export function testProviderConnection(
+  provider: ProviderConfig,
+): Promise<{ ok: boolean; models?: string[]; error?: string }> {
+  return listModels(provider);
 }

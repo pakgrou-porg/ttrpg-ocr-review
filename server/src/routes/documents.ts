@@ -1,13 +1,20 @@
+import { unlink } from "node:fs/promises";
 import { Router, type Request } from "express";
 import multer from "multer";
 import { createDocument, getCuratedPage, listDocuments, readMeta } from "../documentStore.js";
 import { getNativeText, getPageImage } from "../pageCache.js";
 import { getProvider, getSettings } from "../config.js";
 import { runUnlimitedOcr } from "../ocr.js";
+import { ensureDir, TMP_DIR } from "../paths.js";
 
+await ensureDir(TMP_DIR);
+
+// Streams uploads straight to disk (TMP_DIR) instead of buffering the whole
+// file in process memory — scanned rulebook PDFs can be large. 1GB is a
+// generous ceiling for a local single-user tool.
 const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 200 * 1024 * 1024 },
+  storage: multer.diskStorage({ destination: TMP_DIR }),
+  limits: { fileSize: 1024 * 1024 * 1024 },
 });
 
 const router = Router();
@@ -25,15 +32,16 @@ router.post(
   async (req: Request, res) => {
     const files = req.files as Record<string, Express.Multer.File[]> | undefined;
     const pdfFile = files?.pdf?.[0];
+    const jsonlFile = files?.jsonl?.[0];
     if (!pdfFile) {
+      if (jsonlFile) await unlink(jsonlFile.path).catch(() => {});
       res.status(400).json({ error: "A PDF file is required." });
       return;
     }
-    const jsonlFile = files?.jsonl?.[0];
     const meta = await createDocument({
-      pdfBuffer: pdfFile.buffer,
+      pdfTempPath: pdfFile.path,
       pdfFilename: pdfFile.originalname,
-      jsonlContent: jsonlFile ? jsonlFile.buffer.toString("utf-8") : null,
+      jsonlTempPath: jsonlFile ? jsonlFile.path : null,
       jsonlFilename: jsonlFile ? jsonlFile.originalname : null,
     });
     res.status(201).json(meta);

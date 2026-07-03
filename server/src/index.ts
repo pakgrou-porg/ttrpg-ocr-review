@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express, { type NextFunction, type Request, type Response } from "express";
+import { MulterError } from "multer";
 import documentsRouter from "./routes/documents.js";
 import providersRouter from "./routes/providers.js";
 import settingsRouter from "./routes/settings.js";
@@ -35,6 +36,10 @@ app.use((req, res, next) => {
 });
 
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  if (err instanceof MulterError && err.code === "LIMIT_FILE_SIZE") {
+    res.status(413).json({ error: "File too large (1GB limit). Split the PDF or raise the limit in server/src/routes/documents.ts." });
+    return;
+  }
   console.error(err);
   res.status(500).json({ error: err instanceof Error ? err.message : "Internal error" });
 });

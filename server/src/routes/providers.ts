@@ -7,7 +7,7 @@ import {
   listProviders,
   updateProvider,
 } from "../config.js";
-import { testProviderConnection } from "../ocr.js";
+import { listModels, testProviderConnection } from "../ocr.js";
 
 const router = Router();
 
@@ -18,6 +18,16 @@ function toPublic(p: ProviderConfig): PublicProviderConfig {
 
 router.get("/", async (_req, res) => {
   res.json((await listProviders()).map(toPublic));
+});
+
+// Lets the add-provider form discover models before the provider is saved.
+router.post("/discover-models", async (req, res) => {
+  const { baseUrl, apiPrefix, apiKey } = req.body ?? {};
+  if (!baseUrl) {
+    res.status(400).json({ ok: false, error: "baseUrl is required" });
+    return;
+  }
+  res.json(await listModels({ baseUrl, apiPrefix, apiKey }));
 });
 
 router.post("/", async (req, res) => {

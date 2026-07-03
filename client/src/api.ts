@@ -71,6 +71,12 @@ export const api = {
       method: "POST",
     }),
 
+  discoverModels: (input: { baseUrl: string; apiPrefix?: string; apiKey?: string }) =>
+    request<{ ok: boolean; models?: string[]; error?: string }>("/api/providers/discover-models", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+
   getSettings: () => request<AppSettings>("/api/settings"),
 
   updateSettings: (patch: Partial<AppSettings>) =>

@@ -12,11 +12,19 @@ const emptyForm: ProviderConfigInput = {
   supportsVision: true,
 };
 
+interface TestResult {
+  message: string;
+  models: string[];
+}
+
 export function SettingsView() {
   const [providers, setProviders] = useState<PublicProviderConfig[]>([]);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [form, setForm] = useState<ProviderConfigInput>(emptyForm);
-  const [testResults, setTestResults] = useState<Record<string, string>>({});
+  const [testResults, setTestResults] = useState<Record<string, TestResult>>({});
+  const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
+  const [discovering, setDiscovering] = useState(false);
+  const [discoverError, setDiscoverError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function refresh() {
@@ -37,6 +45,8 @@ export function SettingsView() {
     try {
       await api.createProvider(form);
       setForm(emptyForm);
+      setDiscoveredModels([]);
+      setDiscoverError(null);
       setError(null);
       await refresh();
     } catch (e) {
@@ -50,12 +60,50 @@ export function SettingsView() {
   }
 
   async function test(id: string) {
-    setTestResults((r) => ({ ...r, [id]: "Testing…" }));
+    setTestResults((r) => ({ ...r, [id]: { message: "Testing…", models: [] } }));
     const result = await api.testProvider(id);
     setTestResults((r) => ({
       ...r,
-      [id]: result.ok ? `OK — ${result.models?.length ?? 0} models` : `Failed: ${result.error}`,
+      [id]: {
+        message: result.ok ? `OK — ${result.models?.length ?? 0} models` : `Failed: ${result.error}`,
+        models: result.models ?? [],
+      },
     }));
+  }
+
+  async function changeProviderModel(id: string, model: string) {
+    await api.updateProvider(id, { model });
+    await refresh();
+  }
+
+  async function discoverModelsForForm() {
+    if (!form.baseUrl) {
+      setDiscoverError("Enter a base URL first.");
+      return;
+    }
+    setDiscovering(true);
+    setDiscoverError(null);
+    try {
+      const result = await api.discoverModels({
+        baseUrl: form.baseUrl,
+        apiPrefix: form.apiPrefix,
+        apiKey: form.apiKey,
+      });
+      if (result.ok) {
+        const models = result.models ?? [];
+        setDiscoveredModels(models);
+        if (!form.model && models[0]) setForm((f) => ({ ...f, model: models[0] }));
+        if (models.length === 0) setDiscoverError("Connected, but no models were returned.");
+      } else {
+        setDiscoveredModels([]);
+        setDiscoverError(result.error ?? "Discovery failed");
+      }
+    } catch (e) {
+      setDiscoveredModels([]);
+      setDiscoverError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDiscovering(false);
+    }
   }
 
   function toggleOpenRouter(checked: boolean) {
@@ -90,7 +138,20 @@ export function SettingsView() {
                   {p.baseUrl}
                   {p.apiPrefix} · {p.model} · {p.isOpenRouter ? "OpenRouter" : "local"}
                 </div>
-                {testResults[p.id] && <div className="text-slate-400">{testResults[p.id]}</div>}
+                {testResults[p.id] && <div className="text-slate-400">{testResults[p.id].message}</div>}
+                {testResults[p.id]?.models.length ? (
+                  <select
+                    value={p.model}
+                    onChange={(e) => changeProviderModel(p.id, e.target.value)}
+                    className="mt-1 rounded border border-slate-700 bg-transparent px-1 py-0.5 text-xs"
+                  >
+                    {testResults[p.id].models.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
               </div>
               <div className="flex shrink-0 gap-2">
                 {p.id !== settings.activeProviderId && (
@@ -106,7 +167,7 @@ export function SettingsView() {
                   </button>
                 )}
                 <button type="button" onClick={() => test(p.id)} className="rounded border border-slate-600 px-2 py-1 text-xs">
-                  Test
+                  Test / discover models
                 </button>
                 <button
                   type="button"
@@ -148,17 +209,41 @@ export function SettingsView() {
           />
           <input
             className="rounded border border-slate-600 bg-transparent px-2 py-1 text-sm"
-            placeholder="Model id"
-            value={form.model}
-            onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
-          />
-          <input
-            className="rounded border border-slate-600 bg-transparent px-2 py-1 text-sm"
             placeholder="API key (optional for local servers)"
             type="password"
             value={form.apiKey}
             onChange={(e) => setForm((f) => ({ ...f, apiKey: e.target.value }))}
           />
+          <div className="flex gap-2">
+            <input
+              className="flex-1 rounded border border-slate-600 bg-transparent px-2 py-1 text-sm"
+              placeholder="Model id"
+              value={form.model}
+              onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
+            />
+            <button
+              type="button"
+              onClick={discoverModelsForForm}
+              disabled={!form.baseUrl || discovering}
+              className="shrink-0 rounded border border-slate-600 px-2 py-1 text-xs disabled:opacity-50"
+            >
+              {discovering ? "…" : "Discover"}
+            </button>
+          </div>
+          {discoveredModels.length > 0 && (
+            <select
+              value={form.model}
+              onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
+              className="col-span-2 rounded border border-slate-600 bg-transparent px-2 py-1 text-sm"
+            >
+              {discoveredModels.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          )}
+          {discoverError && <p className="col-span-2 text-xs text-red-400">{discoverError}</p>}
           <button
             type="button"
             onClick={addProvider}

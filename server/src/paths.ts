@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +7,7 @@ import { join } from "node:path";
 export const APP_DIR = join(homedir(), ".ttrpg-ocr-review");
 export const CONFIG_PATH = join(APP_DIR, "config.json");
 export const WORKSPACE_DIR = join(APP_DIR, "workspace");
+export const TMP_DIR = join(APP_DIR, "tmp");
 
 export function docDir(docId: string): string {
   return join(WORKSPACE_DIR, docId);
@@ -40,7 +42,15 @@ export async function ensureDir(dir: string): Promise<void> {
 }
 
 // Content-hashing the PDF gives every load of the same file a stable id, so
-// re-opening it reuses cached page renders / native text / OCR runs.
-export function hashBuffer(buf: Buffer): string {
-  return createHash("sha256").update(buf).digest("hex").slice(0, 16);
+// re-opening it reuses cached page renders / native text / OCR runs. Hashed
+// as a stream so a large upload never has to sit fully in memory just to be
+// identified.
+export function hashFile(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = createHash("sha256");
+    createReadStream(filePath)
+      .on("data", (chunk) => hash.update(chunk))
+      .on("error", reject)
+      .on("end", () => resolve(hash.digest("hex").slice(0, 16)));
+  });
 }
