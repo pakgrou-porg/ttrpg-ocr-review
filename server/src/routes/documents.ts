@@ -1,10 +1,11 @@
 import { unlink } from "node:fs/promises";
 import { Router, type Request } from "express";
 import multer from "multer";
+import type { AppSettings, ProviderConfig } from "@ttrpg-ocr-review/shared";
 import { createDocument, getCuratedPage, listDocuments, readMeta } from "../documentStore.js";
 import { getNativeText, getPageImage } from "../pageCache.js";
 import { getProvider, getSettings } from "../config.js";
-import { runUnlimitedOcr } from "../ocr.js";
+import { runComparison, runUnlimitedOcr } from "../ocr.js";
 import { ensureDir, TMP_DIR } from "../paths.js";
 
 await ensureDir(TMP_DIR);
@@ -18,6 +19,23 @@ const upload = multer({
 });
 
 const router = Router();
+
+// Shared by the unlimited-ocr and compare routes: pick the requested
+// provider, falling back to the configured active one.
+async function resolveProvider(
+  requestedId: string | undefined,
+  settings: AppSettings,
+): Promise<{ provider: ProviderConfig } | { error: string; status: number }> {
+  const providerId = requestedId ?? settings.activeProviderId ?? undefined;
+  if (!providerId) {
+    return { error: "No provider configured. Add one in Settings first.", status: 400 };
+  }
+  const provider = await getProvider(providerId);
+  if (!provider) {
+    return { error: "Provider not found", status: 404 };
+  }
+  return { provider };
+}
 
 router.get("/", async (_req, res) => {
   res.json(await listDocuments());
@@ -91,14 +109,9 @@ router.post("/:id/pages/:n/unlimited-ocr", async (req, res) => {
   }
   const pageNumber = Number(req.params.n);
   const settings = await getSettings();
-  const providerId: string | undefined = req.body?.providerId ?? settings.activeProviderId ?? undefined;
-  if (!providerId) {
-    res.status(400).json({ error: "No provider configured. Add one in Settings first." });
-    return;
-  }
-  const provider = await getProvider(providerId);
-  if (!provider) {
-    res.status(404).json({ error: "Provider not found" });
+  const resolved = await resolveProvider(req.body?.providerId, settings);
+  if ("error" in resolved) {
+    res.status(resolved.status).json({ error: resolved.error });
     return;
   }
 
@@ -110,10 +123,54 @@ router.post("/:id/pages/:n/unlimited-ocr", async (req, res) => {
   const result = await runUnlimitedOcr({
     docId: req.params.id,
     pageNumber,
-    provider,
+    provider: resolved.provider,
     prompt,
     includeRegionsHint,
     curated,
+    imagePng,
+    forceRerun: Boolean(req.body?.forceRerun),
+  });
+  res.json(result);
+});
+
+router.post("/:id/pages/:n/compare", async (req, res) => {
+  const meta = await readMeta(req.params.id);
+  if (!meta) {
+    res.status(404).json({ error: "Document not found" });
+    return;
+  }
+  const pageNumber = Number(req.params.n);
+  // An empty string is a legitimate (if degenerate) OCR result — worth
+  // comparing, since "produced nothing" is itself a real finding. Only a
+  // genuinely missing field means OCR was never run.
+  const unlimitedOcrText: string | undefined = req.body?.unlimitedOcrText;
+  if (typeof unlimitedOcrText !== "string") {
+    res.status(400).json({ error: "Run Unlimited-OCR for this page first." });
+    return;
+  }
+  const curated = await getCuratedPage(req.params.id, pageNumber);
+  if (!curated) {
+    res.status(400).json({ error: "No curated JSONL data for this page to compare against." });
+    return;
+  }
+
+  const settings = await getSettings();
+  const resolved = await resolveProvider(req.body?.providerId, settings);
+  if ("error" in resolved) {
+    res.status(resolved.status).json({ error: resolved.error });
+    return;
+  }
+
+  const comparisonPrompt: string = req.body?.comparisonPrompt ?? settings.comparisonPrompt;
+  const imagePng = await getPageImage(req.params.id, pageNumber, settings.renderDpi);
+
+  const result = await runComparison({
+    docId: req.params.id,
+    pageNumber,
+    provider: resolved.provider,
+    comparisonPrompt,
+    curated,
+    unlimitedOcrText,
     imagePng,
     forceRerun: Boolean(req.body?.forceRerun),
   });

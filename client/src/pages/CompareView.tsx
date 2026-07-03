@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type {
+  ComparisonResult,
   CuratedPageRecord,
   DocumentMeta,
   NativeTextResult,
@@ -15,10 +16,12 @@ export function CompareView({ docId, onBack }: { docId: string; onBack: () => vo
   const [nativeText, setNativeText] = useState<NativeTextResult | null>(null);
   const [curated, setCurated] = useState<CuratedPageRecord | null>(null);
   const [ocrResult, setOcrResult] = useState<UnlimitedOcrResult | null>(null);
+  const [comparison, setComparison] = useState<ComparisonResult | null>(null);
   const [providers, setProviders] = useState<PublicProviderConfig[]>([]);
   const [activeProviderId, setActiveProviderId] = useState<string | null>(null);
   const [includeRegionsHint, setIncludeRegionsHint] = useState(false);
   const [ocrBusy, setOcrBusy] = useState(false);
+  const [compareBusy, setCompareBusy] = useState(false);
   const [showOverlay, setShowOverlay] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -35,6 +38,7 @@ export function CompareView({ docId, onBack }: { docId: string; onBack: () => vo
     setNativeText(null);
     setCurated(null);
     setOcrResult(null);
+    setComparison(null);
     api.getNativeText(docId, page).then(setNativeText).catch((e) => setError(e instanceof Error ? e.message : String(e)));
     api.getCuratedPage(docId, page).then(setCurated).catch(() => setCurated(null));
   }, [docId, page]);
@@ -56,10 +60,29 @@ export function CompareView({ docId, onBack }: { docId: string; onBack: () => vo
         forceRerun,
       });
       setOcrResult(result);
+      setComparison(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setOcrBusy(false);
+    }
+  }
+
+  async function runCompare(forceRerun = false) {
+    if (!activeProviderId || !ocrResult) return;
+    setCompareBusy(true);
+    setError(null);
+    try {
+      const result = await api.compareWithCurated(docId, page, {
+        providerId: activeProviderId,
+        unlimitedOcrText: ocrResult.text,
+        forceRerun,
+      });
+      setComparison(result);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCompareBusy(false);
     }
   }
 
@@ -113,7 +136,8 @@ export function CompareView({ docId, onBack }: { docId: string; onBack: () => vo
         <div className="border-b border-red-900 bg-red-950/50 px-4 py-2 text-sm text-red-300">{error}</div>
       )}
 
-      <div className="grid flex-1 grid-cols-1 gap-4 overflow-auto p-4 lg:grid-cols-3">
+      <div className="flex-1 overflow-auto">
+      <div className="grid grid-cols-1 gap-4 p-4 lg:grid-cols-3">
         <section className="flex flex-col rounded-lg border border-slate-800">
           <h2 className="border-b border-slate-800 px-3 py-2 text-sm font-medium">Extracted PDF (native text)</h2>
           <img src={imageUrl} alt={`Page ${page}`} className="max-h-80 w-full bg-slate-950 object-contain" />
@@ -211,6 +235,42 @@ export function CompareView({ docId, onBack }: { docId: string; onBack: () => vo
             )}
           </div>
         </section>
+      </div>
+
+      {ocrResult && (
+        <div className="px-4 pb-4">
+          <section className="flex flex-col rounded-lg border border-slate-800">
+            <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
+              <h2 className="text-sm font-medium">Structural comparison (curated regions/OCR vs Unlimited-OCR)</h2>
+              <button
+                type="button"
+                disabled={compareBusy || !curated}
+                onClick={() => runCompare(Boolean(comparison))}
+                title={curated ? undefined : "No curated JSONL data for this page"}
+                className="rounded bg-indigo-600 px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
+              >
+                {compareBusy ? "Comparing…" : comparison ? "Compare again" : "Compare vs curated"}
+              </button>
+            </div>
+            <div className="p-3 text-xs">
+              {comparison ? (
+                <>
+                  <p className="mb-2 text-slate-400">
+                    {comparison.model} · {comparison.latencyMs}ms {comparison.cached ? "· cached" : ""}
+                  </p>
+                  <pre className="whitespace-pre-wrap font-sans">{comparison.text}</pre>
+                </>
+              ) : (
+                <p className="text-slate-500">
+                  {curated
+                    ? "Checks whether Unlimited-OCR captured the text, images, and table alignment the curated pipeline identified."
+                    : "No curated JSONL data for this page — load a JSONL export to enable this check."}
+                </p>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
       </div>
     </div>
   );

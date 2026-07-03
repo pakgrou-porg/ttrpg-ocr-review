@@ -8,20 +8,31 @@ export function LoadView({ onOpen }: { onOpen: (id: string) => void }) {
   const [jsonlFile, setJsonlFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [jsonlWarning, setJsonlWarning] = useState<{ docId: string; message: string } | null>(null);
+
+  function refreshDocuments() {
+    return api.listDocuments().then(setDocuments);
+  }
 
   useEffect(() => {
-    api
-      .listDocuments()
-      .then(setDocuments)
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+    refreshDocuments().catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, []);
 
   async function handleUpload() {
     if (!pdfFile) return;
     setBusy(true);
     setError(null);
+    setJsonlWarning(null);
     try {
       const meta = await api.uploadDocument(pdfFile, jsonlFile);
+      await refreshDocuments();
+      if (jsonlFile && meta.curatedPageCount === 0) {
+        setJsonlWarning({
+          docId: meta.id,
+          message: `"${jsonlFile.name}" was accepted, but no page records could be parsed from it (expected one JSON object per line, or a JSON array of records, each with a "source.page_number" field). The document is loaded, but the curated pipeline panel will be empty until you load a file in a recognized shape.`,
+        });
+        return;
+      }
       onOpen(meta.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -60,6 +71,18 @@ export function LoadView({ onOpen }: { onOpen: (id: string) => void }) {
           />
         </label>
         {error && <p className="text-sm text-red-400">{error}</p>}
+        {jsonlWarning && (
+          <div className="space-y-2 rounded border border-amber-700 bg-amber-950/40 p-3 text-sm text-amber-300">
+            <p>{jsonlWarning.message}</p>
+            <button
+              type="button"
+              onClick={() => onOpen(jsonlWarning.docId)}
+              className="rounded border border-amber-700 px-2 py-1 text-xs hover:bg-amber-900/40"
+            >
+              Open anyway
+            </button>
+          </div>
+        )}
         <button
           type="button"
           disabled={!pdfFile || busy}
@@ -82,7 +105,13 @@ export function LoadView({ onOpen }: { onOpen: (id: string) => void }) {
                   className="flex w-full items-center justify-between px-4 py-3 text-left text-sm hover:bg-slate-800"
                 >
                   <span>{doc.pdfFilename}</span>
-                  <span className="text-slate-500">{doc.pageCount} pages</span>
+                  <span className="text-slate-500">
+                    {doc.pageCount} pages
+                    {doc.jsonlFilename &&
+                      (doc.curatedPageCount
+                        ? ` · ${doc.curatedPageCount} curated`
+                        : " · curated data unparsed")}
+                  </span>
                 </button>
               </li>
             ))}

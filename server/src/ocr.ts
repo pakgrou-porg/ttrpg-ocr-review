@@ -2,8 +2,13 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { CuratedPageRecord, ProviderConfig, UnlimitedOcrResult } from "@ttrpg-ocr-review/shared";
-import { ensureDir, ocrRunsDir } from "./paths.js";
+import type {
+  ComparisonResult,
+  CuratedPageRecord,
+  ProviderConfig,
+  UnlimitedOcrResult,
+} from "@ttrpg-ocr-review/shared";
+import { comparisonsDir, ensureDir, ocrRunsDir } from "./paths.js";
 
 export function buildRegionsHintText(curated: CuratedPageRecord | null): string {
   const regions = curated?.labels?.regions;
@@ -18,15 +23,87 @@ export function buildRegionsHintText(curated: CuratedPageRecord | null): string 
   return `Known page regions, for reference only:\n${lines.join("\n")}`;
 }
 
-export function promptHash(prompt: string, includeRegionsHint: boolean, regionsSummary: string): string {
-  return createHash("sha256")
-    .update(`${prompt}::${includeRegionsHint}::${regionsSummary}`)
-    .digest("hex")
-    .slice(0, 12);
+const TABLE_LIKE_TYPES = new Set(["table", "stat_block", "statblock"]);
+const IMAGE_LIKE_TYPES = new Set(["image", "art", "figure", "illustration", "map"]);
+
+// Full context for the comparison judge: layout + every region (with an
+// explicit image/table count, since those are the two structural failure
+// modes a plain-text OCR pass is most likely to get wrong) + the curated
+// pipeline's own OCR text.
+export function buildCuratedComparisonContext(curated: CuratedPageRecord | null): string {
+  if (!curated) return "No curated record exists for this page.";
+  const regions = (curated.labels.regions ?? []).slice().sort((a, b) => a.sequence - b.sequence);
+  const imageCount = regions.filter((r) => IMAGE_LIKE_TYPES.has((r.regionType ?? r.type ?? "").toLowerCase())).length;
+  const tableCount = regions.filter((r) => TABLE_LIKE_TYPES.has((r.regionType ?? r.type ?? "").toLowerCase())).length;
+
+  const lines = [
+    `Layout type: ${curated.labels.page_layout?.layout_type ?? "unknown"}${curated.labels.page_layout?.columns ? `, ${curated.labels.page_layout.columns} column(s)` : ""}`,
+    `Regions (${regions.length} total, ${imageCount} image/figure, ${tableCount} table/stat-block), in reading order:`,
+    ...regions.map((r) => `  ${r.sequence}. ${r.regionType ?? r.type ?? "region"}`),
+    "",
+    "Curated pipeline OCR text:",
+    '"""',
+    curated.labels.ocr_text || "(none captured)",
+    '"""',
+  ];
+  return lines.join("\n");
 }
 
-function cacheFile(docId: string, pageNumber: number, providerId: string, hash: string): string {
-  return join(ocrRunsDir(docId), `page-${pageNumber}-${providerId}-${hash}.json`);
+function hashParts(...parts: string[]): string {
+  return createHash("sha256").update(parts.join("::")).digest("hex").slice(0, 12);
+}
+
+export function promptHash(prompt: string, includeRegionsHint: boolean, regionsSummary: string): string {
+  return hashParts(prompt, String(includeRegionsHint), regionsSummary);
+}
+
+async function readCache<T>(file: string): Promise<T | null> {
+  if (!existsSync(file)) return null;
+  return JSON.parse(await readFile(file, "utf-8")) as T;
+}
+
+interface ChatResponse {
+  text: string;
+  latencyMs: number;
+}
+
+// Vision inference on local hardware can be slow, but it shouldn't hang the
+// request indefinitely — undici's default header timeout is ~5 minutes,
+// which just leaves the UI stuck with no feedback. Fail clearly instead.
+const CHAT_TIMEOUT_MS = 120_000;
+
+async function callVisionChat(provider: ProviderConfig, content: Array<Record<string, unknown>>): Promise<ChatResponse> {
+  const url = `${provider.baseUrl}${provider.apiPrefix}/chat/completions`;
+  const started = Date.now();
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {}),
+      },
+      body: JSON.stringify({
+        model: provider.model,
+        temperature: 0,
+        messages: [{ role: "user", content }],
+      }),
+      signal: AbortSignal.timeout(CHAT_TIMEOUT_MS),
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "TimeoutError") {
+      throw new Error(`Provider did not respond within ${CHAT_TIMEOUT_MS / 1000}s.`);
+    }
+    throw err;
+  }
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Provider request failed (${res.status}): ${body.slice(0, 500)}`);
+  }
+
+  const json = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+  return { text: json.choices?.[0]?.message?.content ?? "", latencyMs: Date.now() - started };
 }
 
 interface RunOcrInput {
@@ -44,45 +121,21 @@ export async function runUnlimitedOcr(input: RunOcrInput): Promise<UnlimitedOcrR
   const regionsSummary = input.includeRegionsHint ? buildRegionsHintText(input.curated) : "";
   const hash = promptHash(input.prompt, input.includeRegionsHint, regionsSummary);
   await ensureDir(ocrRunsDir(input.docId));
-  const file = cacheFile(input.docId, input.pageNumber, input.provider.id, hash);
+  const file = join(ocrRunsDir(input.docId), `page-${input.pageNumber}-${input.provider.id}-${hash}.json`);
 
-  if (!input.forceRerun && existsSync(file)) {
-    const cached = JSON.parse(await readFile(file, "utf-8")) as UnlimitedOcrResult;
-    return { ...cached, cached: true };
+  if (!input.forceRerun) {
+    const cached = await readCache<UnlimitedOcrResult>(file);
+    if (cached) return { ...cached, cached: true };
   }
 
-  const userContent: Array<Record<string, unknown>> = [{ type: "text", text: input.prompt }];
-  if (regionsSummary) userContent.push({ type: "text", text: regionsSummary });
-  userContent.push({
+  const content: Array<Record<string, unknown>> = [{ type: "text", text: input.prompt }];
+  if (regionsSummary) content.push({ type: "text", text: regionsSummary });
+  content.push({
     type: "image_url",
     image_url: { url: `data:image/png;base64,${input.imagePng.toString("base64")}` },
   });
 
-  const url = `${input.provider.baseUrl}${input.provider.apiPrefix}/chat/completions`;
-  const started = Date.now();
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(input.provider.apiKey ? { Authorization: `Bearer ${input.provider.apiKey}` } : {}),
-    },
-    body: JSON.stringify({
-      model: input.provider.model,
-      temperature: 0,
-      messages: [{ role: "user", content: userContent }],
-    }),
-  });
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Provider request failed (${res.status}): ${body.slice(0, 500)}`);
-  }
-
-  const json = (await res.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-  };
-  const text = json.choices?.[0]?.message?.content ?? "";
-  const latencyMs = Date.now() - started;
+  const { text, latencyMs } = await callVisionChat(input.provider, content);
 
   const result: UnlimitedOcrResult = {
     pageNumber: input.pageNumber,
@@ -91,6 +144,55 @@ export async function runUnlimitedOcr(input: RunOcrInput): Promise<UnlimitedOcrR
     model: input.provider.model,
     prompt: input.prompt,
     includeRegionsHint: input.includeRegionsHint,
+    text,
+    latencyMs,
+    createdAt: new Date().toISOString(),
+    cached: false,
+  };
+  await writeFile(file, JSON.stringify(result, null, 2), "utf-8");
+  return result;
+}
+
+interface RunComparisonInput {
+  docId: string;
+  pageNumber: number;
+  provider: ProviderConfig;
+  comparisonPrompt: string;
+  curated: CuratedPageRecord | null;
+  unlimitedOcrText: string;
+  imagePng: Buffer;
+  forceRerun?: boolean;
+}
+
+// Judges the Unlimited-OCR text against the curated pipeline's regions/OCR,
+// with the page image included so the model can verify claims (an image
+// region really is a figure, a table really is misaligned) rather than
+// trusting either text blindly.
+export async function runComparison(input: RunComparisonInput): Promise<ComparisonResult> {
+  const curatedContext = buildCuratedComparisonContext(input.curated);
+  const hash = hashParts(input.comparisonPrompt, curatedContext, input.unlimitedOcrText);
+  await ensureDir(comparisonsDir(input.docId));
+  const file = join(comparisonsDir(input.docId), `page-${input.pageNumber}-${input.provider.id}-${hash}.json`);
+
+  if (!input.forceRerun) {
+    const cached = await readCache<ComparisonResult>(file);
+    if (cached) return { ...cached, cached: true };
+  }
+
+  const content: Array<Record<string, unknown>> = [
+    { type: "text", text: input.comparisonPrompt },
+    { type: "text", text: `Curated pipeline record:\n${curatedContext}` },
+    { type: "text", text: `Unlimited-OCR transcription:\n"""\n${input.unlimitedOcrText || "(empty)"}\n"""` },
+    { type: "image_url", image_url: { url: `data:image/png;base64,${input.imagePng.toString("base64")}` } },
+  ];
+
+  const { text, latencyMs } = await callVisionChat(input.provider, content);
+
+  const result: ComparisonResult = {
+    pageNumber: input.pageNumber,
+    providerId: input.provider.id,
+    providerName: input.provider.name,
+    model: input.provider.model,
     text,
     latencyMs,
     createdAt: new Date().toISOString(),
@@ -113,6 +215,7 @@ export async function listModels(
     const url = `${input.baseUrl}${input.apiPrefix?.trim() || "/v1"}/models`;
     const res = await fetch(url, {
       headers: input.apiKey ? { Authorization: `Bearer ${input.apiKey}` } : {},
+      signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
     const json = (await res.json()) as { data?: Array<{ id?: string }> };
@@ -121,6 +224,9 @@ export async function listModels(
       : [];
     return { ok: true, models };
   } catch (err) {
+    if (err instanceof Error && err.name === "TimeoutError") {
+      return { ok: false, error: "Provider did not respond within 15s." };
+    }
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }

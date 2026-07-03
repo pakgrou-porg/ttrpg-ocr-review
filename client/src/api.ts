@@ -1,5 +1,6 @@
 import type {
   AppSettings,
+  ComparisonResult,
   CuratedPageRecord,
   DocumentMeta,
   NativeTextResult,
@@ -30,6 +31,13 @@ export interface RunOcrOptions {
   forceRerun?: boolean;
 }
 
+export interface CompareOptions {
+  providerId?: string;
+  unlimitedOcrText: string;
+  comparisonPrompt?: string;
+  forceRerun?: boolean;
+}
+
 export const api = {
   listDocuments: () => request<DocumentMeta[]>("/api/documents"),
 
@@ -52,6 +60,12 @@ export const api = {
 
   runUnlimitedOcr: (id: string, n: number, opts: RunOcrOptions) =>
     request<UnlimitedOcrResult>(`/api/documents/${id}/pages/${n}/unlimited-ocr`, {
+      method: "POST",
+      body: JSON.stringify(opts),
+    }),
+
+  compareWithCurated: (id: string, n: number, opts: CompareOptions) =>
+    request<ComparisonResult>(`/api/documents/${id}/pages/${n}/compare`, {
       method: "POST",
       body: JSON.stringify(opts),
     }),

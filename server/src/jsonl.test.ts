@@ -46,4 +46,56 @@ describe("parseJsonlContent", () => {
     const parsed = parseJsonlContent(content);
     expect(parsed.get(1)?.labels.ocr_text).toBe("second");
   });
+
+  it("falls back to a pretty-printed JSON array when no line parses on its own", () => {
+    const content = JSON.stringify(
+      [
+        { source: { page_number: 1 }, labels: { ocr_text: "one" } },
+        { source: { page_number: 2 }, labels: { ocr_text: "two" } },
+      ],
+      null,
+      2,
+    );
+
+    const parsed = parseJsonlContent(content);
+    expect(parsed.size).toBe(2);
+    expect(parsed.get(2)?.labels.ocr_text).toBe("two");
+  });
+
+  it("falls back to a wrapper object holding an array of records", () => {
+    const content = JSON.stringify(
+      {
+        document: "Sample Rulebook",
+        pages: [
+          { source: { page_number: 1 }, labels: { ocr_text: "one" } },
+          { source: { page_number: 2 }, labels: { ocr_text: "two" } },
+        ],
+      },
+      null,
+      2,
+    );
+
+    const parsed = parseJsonlContent(content);
+    expect(parsed.size).toBe(2);
+    expect(parsed.get(1)?.labels.ocr_text).toBe("one");
+  });
+
+  it("falls back to an object keyed by page id whose values are records", () => {
+    const content = JSON.stringify(
+      {
+        "1": { source: { page_number: 1 }, labels: { ocr_text: "one" } },
+        "2": { source: { page_number: 2 }, labels: { ocr_text: "two" } },
+      },
+      null,
+      2,
+    );
+
+    const parsed = parseJsonlContent(content);
+    expect(parsed.size).toBe(2);
+  });
+
+  it("returns an empty map for JSON that matches no known shape", () => {
+    const content = JSON.stringify({ document: "Sample Rulebook", note: "no page data here" });
+    expect(parseJsonlContent(content).size).toBe(0);
+  });
 });

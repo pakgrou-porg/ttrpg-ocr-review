@@ -26,7 +26,17 @@ interface CreateDocumentInput {
 export async function readMeta(docId: string): Promise<DocumentMeta | null> {
   const p = metaPath(docId);
   if (!existsSync(p)) return null;
-  return JSON.parse(await readFile(p, "utf-8")) as DocumentMeta;
+  const meta = JSON.parse(await readFile(p, "utf-8")) as DocumentMeta;
+  // meta.json written before curatedPageCount existed won't have it — derive
+  // it from the actual cache rather than reporting a false "unparsed".
+  if (meta.jsonlFilename && meta.curatedPageCount == null) {
+    const cachePath = jsonlCachePath(docId);
+    if (existsSync(cachePath)) {
+      const cached = JSON.parse(await readFile(cachePath, "utf-8")) as Record<string, CuratedPageRecord>;
+      meta.curatedPageCount = Object.keys(cached).length;
+    }
+  }
+  return meta;
 }
 
 export async function createDocument(input: CreateDocumentInput): Promise<DocumentMeta> {
@@ -45,6 +55,7 @@ export async function createDocument(input: CreateDocumentInput): Promise<Docume
   const existingMeta = await readMeta(docId);
 
   let jsonlFilename = existingMeta?.jsonlFilename ?? null;
+  let curatedPageCount = existingMeta?.curatedPageCount ?? null;
   if (input.jsonlTempPath !== null) {
     const parsed = await parseJsonlFile(input.jsonlTempPath);
     await writeFile(
@@ -54,6 +65,7 @@ export async function createDocument(input: CreateDocumentInput): Promise<Docume
     );
     await unlink(input.jsonlTempPath).catch(() => {});
     jsonlFilename = input.jsonlFilename;
+    curatedPageCount = parsed.size;
   }
 
   const meta: DocumentMeta = {
@@ -61,6 +73,7 @@ export async function createDocument(input: CreateDocumentInput): Promise<Docume
     pdfFilename: input.pdfFilename,
     jsonlFilename,
     pageCount,
+    curatedPageCount,
     createdAt: existingMeta?.createdAt ?? new Date().toISOString(),
   };
   await writeFile(metaPath(docId), JSON.stringify(meta, null, 2), "utf-8");

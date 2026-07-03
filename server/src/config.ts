@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { nanoid } from "nanoid";
 import {
+  DEFAULT_COMPARISON_PROMPT,
   DEFAULT_OCR_PROMPT,
   type AppSettings,
   type ProviderConfig,
@@ -20,6 +21,7 @@ function defaultConfig(): StoredConfig {
     settings: {
       activeProviderId: null,
       ocrPrompt: DEFAULT_OCR_PROMPT,
+      comparisonPrompt: DEFAULT_COMPARISON_PROMPT,
       includeRegionsHintDefault: false,
       renderDpi: 150,
     },

@@ -25,6 +25,10 @@ export function ocrRunsDir(docId: string): string {
   return join(docDir(docId), "ocr-runs");
 }
 
+export function comparisonsDir(docId: string): string {
+  return join(docDir(docId), "comparisons");
+}
+
 export function sourcePdfPath(docId: string): string {
   return join(docDir(docId), "source.pdf");
 }

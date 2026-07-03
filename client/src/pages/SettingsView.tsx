@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import type { AppSettings, ProviderConfigInput, PublicProviderConfig } from "@ttrpg-ocr-review/shared";
+import {
+  DEFAULT_COMPARISON_PROMPT,
+  DEFAULT_OCR_PROMPT,
+  type AppSettings,
+  type ProviderConfigInput,
+  type PublicProviderConfig,
+} from "@ttrpg-ocr-review/shared";
 import { api } from "../api";
 
 const emptyForm: ProviderConfigInput = {
@@ -255,7 +261,19 @@ export function SettingsView() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-sm font-medium text-slate-300">Unlimited-OCR prompt</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-medium text-slate-300">Unlimited-OCR prompt</h2>
+          <button
+            type="button"
+            onClick={async () => {
+              setSettings({ ...settings, ocrPrompt: DEFAULT_OCR_PROMPT });
+              await api.updateSettings({ ocrPrompt: DEFAULT_OCR_PROMPT });
+            }}
+            className="text-xs text-slate-500 hover:text-slate-300"
+          >
+            Reset to default
+          </button>
+        </div>
         <textarea
           className="h-32 w-full rounded border border-slate-600 bg-transparent p-2 text-sm"
           value={settings.ocrPrompt}
@@ -289,6 +307,33 @@ export function SettingsView() {
             }}
           />
         </label>
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-medium text-slate-300">Structural comparison prompt</h2>
+          <button
+            type="button"
+            onClick={async () => {
+              setSettings({ ...settings, comparisonPrompt: DEFAULT_COMPARISON_PROMPT });
+              await api.updateSettings({ comparisonPrompt: DEFAULT_COMPARISON_PROMPT });
+            }}
+            className="text-xs text-slate-500 hover:text-slate-300"
+          >
+            Reset to default
+          </button>
+        </div>
+        <p className="text-xs text-slate-500">
+          Used by "Compare vs curated" on a document page — judges the Unlimited-OCR text against the
+          curated pipeline's layout, regions, and OCR text (text coverage, images acknowledged, table
+          alignment, reading order).
+        </p>
+        <textarea
+          className="h-40 w-full rounded border border-slate-600 bg-transparent p-2 text-sm"
+          value={settings.comparisonPrompt}
+          onChange={(e) => setSettings({ ...settings, comparisonPrompt: e.target.value })}
+          onBlur={() => api.updateSettings({ comparisonPrompt: settings.comparisonPrompt })}
+        />
       </section>
     </div>
   );
