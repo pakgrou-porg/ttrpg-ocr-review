@@ -57,15 +57,20 @@ export async function createDocument(input: CreateDocumentInput): Promise<Docume
   let jsonlFilename = existingMeta?.jsonlFilename ?? null;
   let curatedPageCount = existingMeta?.curatedPageCount ?? null;
   if (input.jsonlTempPath !== null) {
-    const parsed = await parseJsonlFile(input.jsonlTempPath);
-    await writeFile(
-      jsonlCachePath(docId),
-      JSON.stringify(Object.fromEntries(parsed), null, 2),
-      "utf-8",
-    );
-    await unlink(input.jsonlTempPath).catch(() => {});
-    jsonlFilename = input.jsonlFilename;
-    curatedPageCount = parsed.size;
+    try {
+      const parsed = await parseJsonlFile(input.jsonlTempPath);
+      await writeFile(
+        jsonlCachePath(docId),
+        JSON.stringify(Object.fromEntries(parsed), null, 2),
+        "utf-8",
+      );
+      jsonlFilename = input.jsonlFilename;
+      curatedPageCount = parsed.size;
+    } finally {
+      // Always release the temp file, even if parsing threw — a failed
+      // JSONL upload shouldn't leak a (potentially huge) orphaned copy.
+      await unlink(input.jsonlTempPath).catch(() => {});
+    }
   }
 
   const meta: DocumentMeta = {

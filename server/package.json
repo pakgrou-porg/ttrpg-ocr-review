@@ -15,7 +15,8 @@
     "express": "^5.2.1",
     "multer": "^2.2.0",
     "nanoid": "^5.1.16",
-    "pdfjs-dist": "^6.1.200"
+    "pdfjs-dist": "^6.1.200",
+    "stream-json": "^3.4.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",

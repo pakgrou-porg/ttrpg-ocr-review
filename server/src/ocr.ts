@@ -24,7 +24,7 @@ export function buildRegionsHintText(curated: CuratedPageRecord | null): string 
 }
 
 const TABLE_LIKE_TYPES = new Set(["table", "stat_block", "statblock"]);
-const IMAGE_LIKE_TYPES = new Set(["image", "art", "figure", "illustration", "map"]);
+const IMAGE_LIKE_TYPES = new Set(["image", "art", "figure", "illustration", "map", "graphic"]);
 
 // Full context for the comparison judge: layout + every region (with an
 // explicit image/table count, since those are the two structural failure
