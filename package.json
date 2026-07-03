@@ -1,0 +1,26 @@
+{
+  "name": "ttrpg-ocr-review",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n server,client -c blue,green \"pnpm --filter server dev\" \"pnpm --filter client dev\"",
+    "build": "pnpm --filter client build && pnpm --filter server build",
+    "start": "pnpm --filter server start",
+    "test": "pnpm --filter server test"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "typescript": "^5.7.2"
+  },
+  "packageManager": "pnpm@10.4.1",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "@napi-rs/canvas"
+    ]
+  }
+}
