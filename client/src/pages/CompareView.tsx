@@ -10,6 +10,8 @@ import type {
 import { api } from "../api";
 import { BboxOverlay } from "../components/BboxOverlay";
 import { DiffText } from "../components/DiffText";
+import { PageImage } from "../components/PageImage";
+import { parseOcrRegions } from "../ocrRegions";
 
 export function CompareView({ docId, onBack }: { docId: string; onBack: () => void }) {
   const [meta, setMeta] = useState<DocumentMeta | null>(null);
@@ -24,7 +26,9 @@ export function CompareView({ docId, onBack }: { docId: string; onBack: () => vo
   const [ocrBusy, setOcrBusy] = useState(false);
   const [compareBusy, setCompareBusy] = useState(false);
   const [showOverlay, setShowOverlay] = useState(true);
+  const [showOcrOverlay, setShowOcrOverlay] = useState(true);
   const [showDiff, setShowDiff] = useState(true);
+  const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -41,13 +45,19 @@ export function CompareView({ docId, onBack }: { docId: string; onBack: () => vo
     setCurated(null);
     setOcrResult(null);
     setComparison(null);
+    setImageSize(null);
     api.getNativeText(docId, page).then(setNativeText).catch((e) => setError(e instanceof Error ? e.message : String(e)));
     api.getCuratedPage(docId, page).then(setCurated).catch(() => setCurated(null));
   }, [docId, page]);
 
   const imageUrl = api.pageImageUrl(docId, page);
+  const imageAspect = imageSize ? imageSize.width / imageSize.height : null;
   const regions = useMemo(() => curated?.labels?.regions ?? [], [curated]);
   const curatedText = curated?.labels?.ocr_text || null;
+  const ocrRegions = useMemo(
+    () => (ocrResult && imageSize ? parseOcrRegions(ocrResult.text, imageSize.width, imageSize.height) : null),
+    [ocrResult, imageSize],
+  );
 
   async function runOcr(forceRerun = false) {
     if (!activeProviderId) {
@@ -104,7 +114,7 @@ export function CompareView({ docId, onBack }: { docId: string; onBack: () => vo
           {curatedText && (
             <label className="flex items-center gap-1 text-xs text-slate-400">
               <input type="checkbox" checked={showDiff} onChange={(e) => setShowDiff(e.target.checked)} />
-              Diff vs curated
+              Diff OCR vs curated
             </label>
           )}
           <div className="flex items-center gap-2">
@@ -153,22 +163,14 @@ export function CompareView({ docId, onBack }: { docId: string; onBack: () => vo
             <div className="flex h-9 shrink-0 items-center justify-between border-b border-slate-800 px-3">
               <h2 className="text-sm font-medium">Extracted PDF (native text)</h2>
             </div>
-            <div className="relative h-80 w-full shrink-0 overflow-hidden bg-slate-950">
-              <img src={imageUrl} alt={`Page ${page}`} className="h-full w-full object-contain" />
-            </div>
+            <PageImage src={imageUrl} alt={`Page ${page}`} aspect={imageAspect} onLoadSize={setImageSize} />
             <div className="flex h-9 shrink-0 items-center border-b border-slate-800 px-3 text-xs text-slate-600">
               {nativeText && !nativeText.hasEmbeddedText && "No embedded text layer"}
             </div>
             <div className="flex-1 overflow-auto p-3 text-xs">
               {nativeText ? (
                 nativeText.hasEmbeddedText ? (
-                  <pre className="whitespace-pre-wrap font-sans">
-                    {showDiff && curatedText ? (
-                      <DiffText baseline={curatedText} text={nativeText.text} />
-                    ) : (
-                      nativeText.text
-                    )}
-                  </pre>
+                  <pre className="whitespace-pre-wrap font-sans">{nativeText.text}</pre>
                 ) : (
                   <p className="text-slate-500">No embedded text layer on this page (image-only).</p>
                 )
@@ -182,10 +184,9 @@ export function CompareView({ docId, onBack }: { docId: string; onBack: () => vo
             <div className="flex h-9 shrink-0 items-center justify-between border-b border-slate-800 px-3">
               <h2 className="text-sm font-medium">Curated pipeline (JSONL)</h2>
             </div>
-            <div className="relative h-80 w-full shrink-0 overflow-hidden bg-slate-950">
-              <img src={imageUrl} alt={`Page ${page}`} className="h-full w-full object-contain" />
+            <PageImage src={imageUrl} alt={`Page ${page}`} aspect={imageAspect} onLoadSize={setImageSize}>
               {showOverlay && regions.length > 0 && <BboxOverlay regions={regions} />}
-            </div>
+            </PageImage>
             <div className="flex h-9 shrink-0 items-center justify-between border-b border-slate-800 px-3 text-xs text-slate-400">
               {regions.length > 0 ? (
                 <label className="flex items-center gap-1">
@@ -218,18 +219,30 @@ export function CompareView({ docId, onBack }: { docId: string; onBack: () => vo
           <section className="flex flex-col rounded-lg border border-slate-800">
             <div className="flex h-9 shrink-0 items-center justify-between border-b border-slate-800 px-3">
               <h2 className="text-sm font-medium">Unlimited-OCR</h2>
-              <label className="flex items-center gap-1 text-xs text-slate-400">
-                <input
-                  type="checkbox"
-                  checked={includeRegionsHint}
-                  onChange={(e) => setIncludeRegionsHint(e.target.checked)}
-                />
-                Hint w/ regions
-              </label>
+              <div className="flex items-center gap-3">
+                {ocrRegions && ocrRegions.length > 0 && (
+                  <label className="flex items-center gap-1 text-xs text-slate-400">
+                    <input
+                      type="checkbox"
+                      checked={showOcrOverlay}
+                      onChange={(e) => setShowOcrOverlay(e.target.checked)}
+                    />
+                    Overlay ({ocrRegions.length})
+                  </label>
+                )}
+                <label className="flex items-center gap-1 text-xs text-slate-400">
+                  <input
+                    type="checkbox"
+                    checked={includeRegionsHint}
+                    onChange={(e) => setIncludeRegionsHint(e.target.checked)}
+                  />
+                  Hint w/ regions
+                </label>
+              </div>
             </div>
-            <div className="relative h-80 w-full shrink-0 overflow-hidden bg-slate-950">
-              <img src={imageUrl} alt={`Page ${page}`} className="h-full w-full object-contain" />
-            </div>
+            <PageImage src={imageUrl} alt={`Page ${page}`} aspect={imageAspect} onLoadSize={setImageSize}>
+              {showOcrOverlay && ocrRegions && ocrRegions.length > 0 && <BboxOverlay regions={ocrRegions} />}
+            </PageImage>
             <div className="flex h-9 shrink-0 items-center gap-2 border-b border-slate-800 px-3">
               <select
                 value={activeProviderId ?? ""}
