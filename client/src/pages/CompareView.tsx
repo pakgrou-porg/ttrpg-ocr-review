@@ -9,6 +9,7 @@ import type {
 } from "@ttrpg-ocr-review/shared";
 import { api } from "../api";
 import { BboxOverlay } from "../components/BboxOverlay";
+import { DiffText } from "../components/DiffText";
 
 export function CompareView({ docId, onBack }: { docId: string; onBack: () => void }) {
   const [meta, setMeta] = useState<DocumentMeta | null>(null);
@@ -23,6 +24,7 @@ export function CompareView({ docId, onBack }: { docId: string; onBack: () => vo
   const [ocrBusy, setOcrBusy] = useState(false);
   const [compareBusy, setCompareBusy] = useState(false);
   const [showOverlay, setShowOverlay] = useState(true);
+  const [showDiff, setShowDiff] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -45,6 +47,7 @@ export function CompareView({ docId, onBack }: { docId: string; onBack: () => vo
 
   const imageUrl = api.pageImageUrl(docId, page);
   const regions = useMemo(() => curated?.labels?.regions ?? [], [curated]);
+  const curatedText = curated?.labels?.ocr_text || null;
 
   async function runOcr(forceRerun = false) {
     if (!activeProviderId) {
@@ -97,38 +100,46 @@ export function CompareView({ docId, onBack }: { docId: string; onBack: () => vo
           </button>
           <span className="text-sm font-medium">{meta.pdfFilename}</span>
         </div>
-        <div className="flex items-center gap-2 text-sm">
-          <button
-            type="button"
-            disabled={page <= 1}
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            className="rounded border border-slate-600 px-2 py-1 disabled:opacity-40"
-          >
-            Prev
-          </button>
-          <span>
-            Page{" "}
-            <input
-              type="number"
-              min={1}
-              max={meta.pageCount}
-              value={page}
-              onChange={(e) => {
-                const n = Number(e.target.value);
-                if (n >= 1 && n <= meta.pageCount) setPage(n);
-              }}
-              className="w-14 rounded border border-slate-600 bg-transparent px-1 text-center"
-            />{" "}
-            / {meta.pageCount}
-          </span>
-          <button
-            type="button"
-            disabled={page >= meta.pageCount}
-            onClick={() => setPage((p) => Math.min(meta.pageCount, p + 1))}
-            className="rounded border border-slate-600 px-2 py-1 disabled:opacity-40"
-          >
-            Next
-          </button>
+        <div className="flex items-center gap-4 text-sm">
+          {curatedText && (
+            <label className="flex items-center gap-1 text-xs text-slate-400">
+              <input type="checkbox" checked={showDiff} onChange={(e) => setShowDiff(e.target.checked)} />
+              Diff vs curated
+            </label>
+          )}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={page <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              className="rounded border border-slate-600 px-2 py-1 disabled:opacity-40"
+            >
+              Prev
+            </button>
+            <span>
+              Page{" "}
+              <input
+                type="number"
+                min={1}
+                max={meta.pageCount}
+                value={page}
+                onChange={(e) => {
+                  const n = Number(e.target.value);
+                  if (n >= 1 && n <= meta.pageCount) setPage(n);
+                }}
+                className="w-14 rounded border border-slate-600 bg-transparent px-1 text-center"
+              />{" "}
+              / {meta.pageCount}
+            </span>
+            <button
+              type="button"
+              disabled={page >= meta.pageCount}
+              onClick={() => setPage((p) => Math.min(meta.pageCount, p + 1))}
+              className="rounded border border-slate-600 px-2 py-1 disabled:opacity-40"
+            >
+              Next
+            </button>
+          </div>
         </div>
       </header>
 
@@ -137,140 +148,165 @@ export function CompareView({ docId, onBack }: { docId: string; onBack: () => vo
       )}
 
       <div className="flex-1 overflow-auto">
-      <div className="grid grid-cols-1 gap-4 p-4 lg:grid-cols-3">
-        <section className="flex flex-col rounded-lg border border-slate-800">
-          <h2 className="border-b border-slate-800 px-3 py-2 text-sm font-medium">Extracted PDF (native text)</h2>
-          <img src={imageUrl} alt={`Page ${page}`} className="max-h-80 w-full bg-slate-950 object-contain" />
-          <div className="flex-1 overflow-auto p-3 text-xs">
-            {nativeText ? (
-              nativeText.hasEmbeddedText ? (
-                <pre className="whitespace-pre-wrap font-sans">{nativeText.text}</pre>
-              ) : (
-                <p className="text-slate-500">No embedded text layer on this page (image-only).</p>
-              )
-            ) : (
-              <p className="text-slate-500">Loading…</p>
-            )}
-          </div>
-        </section>
-
-        <section className="flex flex-col rounded-lg border border-slate-800">
-          <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
-            <h2 className="text-sm font-medium">Curated pipeline (JSONL)</h2>
-            {regions.length > 0 && (
-              <label className="flex items-center gap-1 text-xs text-slate-400">
-                <input type="checkbox" checked={showOverlay} onChange={(e) => setShowOverlay(e.target.checked)} />
-                Overlay
-              </label>
-            )}
-          </div>
-          <div className="relative max-h-80 w-full bg-slate-950">
-            <img src={imageUrl} alt={`Page ${page}`} className="w-full object-contain" />
-            {showOverlay && regions.length > 0 && <BboxOverlay regions={regions} />}
-          </div>
-          <div className="flex-1 overflow-auto p-3 text-xs">
-            {curated ? (
-              <>
-                {curated.labels.page_layout?.layout_type && (
-                  <p className="mb-2 text-slate-400">
-                    Layout: {curated.labels.page_layout.layout_type}
-                    {curated.labels.page_layout.columns ? ` · ${curated.labels.page_layout.columns} col` : ""}
-                  </p>
-                )}
-                <pre className="whitespace-pre-wrap font-sans">
-                  {curated.labels.ocr_text || "(no OCR text in export)"}
-                </pre>
-              </>
-            ) : (
-              <p className="text-slate-500">No curated record for this page.</p>
-            )}
-          </div>
-        </section>
-
-        <section className="flex flex-col rounded-lg border border-slate-800">
-          <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
-            <h2 className="text-sm font-medium">Unlimited-OCR</h2>
-            <label className="flex items-center gap-1 text-xs text-slate-400">
-              <input
-                type="checkbox"
-                checked={includeRegionsHint}
-                onChange={(e) => setIncludeRegionsHint(e.target.checked)}
-              />
-              Hint w/ regions
-            </label>
-          </div>
-          <img src={imageUrl} alt={`Page ${page}`} className="max-h-80 w-full bg-slate-950 object-contain" />
-          <div className="flex items-center gap-2 border-b border-slate-800 px-3 py-2">
-            <select
-              value={activeProviderId ?? ""}
-              onChange={(e) => setActiveProviderId(e.target.value || null)}
-              className="flex-1 rounded border border-slate-600 bg-transparent px-2 py-1 text-xs"
-            >
-              <option value="">Select provider…</option>
-              {providers.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              disabled={ocrBusy}
-              onClick={() => runOcr(Boolean(ocrResult))}
-              className="rounded bg-indigo-600 px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
-            >
-              {ocrBusy ? "Running…" : ocrResult ? "Run again" : "Run OCR"}
-            </button>
-          </div>
-          <div className="flex-1 overflow-auto p-3 text-xs">
-            {ocrResult ? (
-              <>
-                <p className="mb-2 text-slate-400">
-                  {ocrResult.model} · {ocrResult.latencyMs}ms {ocrResult.cached ? "· cached" : ""}
-                </p>
-                <pre className="whitespace-pre-wrap font-sans">{ocrResult.text}</pre>
-              </>
-            ) : (
-              <p className="text-slate-500">Not run yet for this page.</p>
-            )}
-          </div>
-        </section>
-      </div>
-
-      {ocrResult && (
-        <div className="px-4 pb-4">
+        <div className="grid grid-cols-1 gap-4 p-4 lg:grid-cols-3">
           <section className="flex flex-col rounded-lg border border-slate-800">
-            <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
-              <h2 className="text-sm font-medium">Structural comparison (curated regions/OCR vs Unlimited-OCR)</h2>
-              <button
-                type="button"
-                disabled={compareBusy || !curated}
-                onClick={() => runCompare(Boolean(comparison))}
-                title={curated ? undefined : "No curated JSONL data for this page"}
-                className="rounded bg-indigo-600 px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
-              >
-                {compareBusy ? "Comparing…" : comparison ? "Compare again" : "Compare vs curated"}
-              </button>
+            <div className="flex h-9 shrink-0 items-center justify-between border-b border-slate-800 px-3">
+              <h2 className="text-sm font-medium">Extracted PDF (native text)</h2>
             </div>
-            <div className="p-3 text-xs">
-              {comparison ? (
+            <div className="relative h-80 w-full shrink-0 overflow-hidden bg-slate-950">
+              <img src={imageUrl} alt={`Page ${page}`} className="h-full w-full object-contain" />
+            </div>
+            <div className="flex h-9 shrink-0 items-center border-b border-slate-800 px-3 text-xs text-slate-600">
+              {nativeText && !nativeText.hasEmbeddedText && "No embedded text layer"}
+            </div>
+            <div className="flex-1 overflow-auto p-3 text-xs">
+              {nativeText ? (
+                nativeText.hasEmbeddedText ? (
+                  <pre className="whitespace-pre-wrap font-sans">
+                    {showDiff && curatedText ? (
+                      <DiffText baseline={curatedText} text={nativeText.text} />
+                    ) : (
+                      nativeText.text
+                    )}
+                  </pre>
+                ) : (
+                  <p className="text-slate-500">No embedded text layer on this page (image-only).</p>
+                )
+              ) : (
+                <p className="text-slate-500">Loading…</p>
+              )}
+            </div>
+          </section>
+
+          <section className="flex flex-col rounded-lg border border-slate-800">
+            <div className="flex h-9 shrink-0 items-center justify-between border-b border-slate-800 px-3">
+              <h2 className="text-sm font-medium">Curated pipeline (JSONL)</h2>
+            </div>
+            <div className="relative h-80 w-full shrink-0 overflow-hidden bg-slate-950">
+              <img src={imageUrl} alt={`Page ${page}`} className="h-full w-full object-contain" />
+              {showOverlay && regions.length > 0 && <BboxOverlay regions={regions} />}
+            </div>
+            <div className="flex h-9 shrink-0 items-center justify-between border-b border-slate-800 px-3 text-xs text-slate-400">
+              {regions.length > 0 ? (
+                <label className="flex items-center gap-1">
+                  <input type="checkbox" checked={showOverlay} onChange={(e) => setShowOverlay(e.target.checked)} />
+                  Overlay
+                </label>
+              ) : (
+                <span className="text-slate-600">No regions</span>
+              )}
+            </div>
+            <div className="flex-1 overflow-auto p-3 text-xs">
+              {curated ? (
                 <>
-                  <p className="mb-2 text-slate-400">
-                    {comparison.model} · {comparison.latencyMs}ms {comparison.cached ? "· cached" : ""}
-                  </p>
-                  <pre className="whitespace-pre-wrap font-sans">{comparison.text}</pre>
+                  {curated.labels.page_layout?.layout_type && (
+                    <p className="mb-2 text-slate-400">
+                      Layout: {curated.labels.page_layout.layout_type}
+                      {curated.labels.page_layout.columns ? ` · ${curated.labels.page_layout.columns} col` : ""}
+                    </p>
+                  )}
+                  <pre className="whitespace-pre-wrap font-sans">
+                    {curated.labels.ocr_text || "(no OCR text in export)"}
+                  </pre>
                 </>
               ) : (
-                <p className="text-slate-500">
-                  {curated
-                    ? "Checks whether Unlimited-OCR captured the text, images, and table alignment the curated pipeline identified."
-                    : "No curated JSONL data for this page — load a JSONL export to enable this check."}
-                </p>
+                <p className="text-slate-500">No curated record for this page.</p>
+              )}
+            </div>
+          </section>
+
+          <section className="flex flex-col rounded-lg border border-slate-800">
+            <div className="flex h-9 shrink-0 items-center justify-between border-b border-slate-800 px-3">
+              <h2 className="text-sm font-medium">Unlimited-OCR</h2>
+              <label className="flex items-center gap-1 text-xs text-slate-400">
+                <input
+                  type="checkbox"
+                  checked={includeRegionsHint}
+                  onChange={(e) => setIncludeRegionsHint(e.target.checked)}
+                />
+                Hint w/ regions
+              </label>
+            </div>
+            <div className="relative h-80 w-full shrink-0 overflow-hidden bg-slate-950">
+              <img src={imageUrl} alt={`Page ${page}`} className="h-full w-full object-contain" />
+            </div>
+            <div className="flex h-9 shrink-0 items-center gap-2 border-b border-slate-800 px-3">
+              <select
+                value={activeProviderId ?? ""}
+                onChange={(e) => setActiveProviderId(e.target.value || null)}
+                className="flex-1 rounded border border-slate-600 bg-transparent px-2 py-1 text-xs"
+              >
+                <option value="">Select provider…</option>
+                {providers.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={ocrBusy}
+                onClick={() => runOcr(Boolean(ocrResult))}
+                className="rounded bg-indigo-600 px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
+              >
+                {ocrBusy ? "Running…" : ocrResult ? "Run again" : "Run OCR"}
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-3 text-xs">
+              {ocrResult ? (
+                <>
+                  <p className="mb-2 text-slate-400">
+                    {ocrResult.model} · {ocrResult.latencyMs}ms {ocrResult.cached ? "· cached" : ""}
+                  </p>
+                  <pre className="whitespace-pre-wrap font-sans">
+                    {showDiff && curatedText ? (
+                      <DiffText baseline={curatedText} text={ocrResult.text} />
+                    ) : (
+                      ocrResult.text
+                    )}
+                  </pre>
+                </>
+              ) : (
+                <p className="text-slate-500">Not run yet for this page.</p>
               )}
             </div>
           </section>
         </div>
-      )}
+
+        {ocrResult && (
+          <div className="px-4 pb-4">
+            <section className="flex flex-col rounded-lg border border-slate-800">
+              <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
+                <h2 className="text-sm font-medium">Structural comparison (curated regions/OCR vs Unlimited-OCR)</h2>
+                <button
+                  type="button"
+                  disabled={compareBusy || !curated}
+                  onClick={() => runCompare(Boolean(comparison))}
+                  title={curated ? undefined : "No curated JSONL data for this page"}
+                  className="rounded bg-indigo-600 px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
+                >
+                  {compareBusy ? "Comparing…" : comparison ? "Compare again" : "Compare vs curated"}
+                </button>
+              </div>
+              <div className="p-3 text-xs">
+                {comparison ? (
+                  <>
+                    <p className="mb-2 text-slate-400">
+                      {comparison.model} · {comparison.latencyMs}ms {comparison.cached ? "· cached" : ""}
+                    </p>
+                    <pre className="whitespace-pre-wrap font-sans">{comparison.text}</pre>
+                  </>
+                ) : (
+                  <p className="text-slate-500">
+                    {curated
+                      ? "Checks whether Unlimited-OCR captured the text, images, and table alignment the curated pipeline identified."
+                      : "No curated JSONL data for this page — load a JSONL export to enable this check."}
+                  </p>
+                )}
+              </div>
+            </section>
+          </div>
+        )}
       </div>
     </div>
   );

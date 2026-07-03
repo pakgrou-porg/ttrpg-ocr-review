@@ -64,15 +64,18 @@ function sanitizeHitlRecord(r: Record<string, unknown>): CuratedPageRecord | nul
   };
 }
 
-// Bundle export: page number under `pageNumber`, regions under the more
-// refined `pageJsonOutput.content_regions` (falling back to the coarser
-// top-level `contentRegions`), OCR text nested under `ocr.*`.
+// Bundle export: page number under `pageNumber`, regions under the
+// top-level `contentRegions` (falling back to `pageJsonOutput.content_regions`
+// only if absent). Top-level entries carry a `reviewId` for HITL-corrected
+// boxes and are the ones Chronicles renders, so they're the authoritative
+// source; pageJsonOutput.content_regions is the earlier pipeline-stage
+// snapshot before human correction. OCR text nested under `ocr.*`.
 function sanitizeBundleRecord(r: Record<string, unknown>): CuratedPageRecord | null {
   const pageNumber = r.pageNumber;
   if (typeof pageNumber !== "number") return null;
   const pageJsonOutput = r.pageJsonOutput as Record<string, unknown> | undefined;
   const layout = pageJsonOutput?.layout as Record<string, unknown> | undefined;
-  const regions = asRegions(pageJsonOutput?.content_regions) ?? asRegions(r.contentRegions);
+  const regions = asRegions(r.contentRegions) ?? asRegions(pageJsonOutput?.content_regions);
   const ocr = r.ocr as Record<string, unknown> | undefined;
   const ocrText = [ocr?.markdownText, ocr?.normalisedText, ocr?.rawText].find(
     (v): v is string => typeof v === "string" && v.length > 0,

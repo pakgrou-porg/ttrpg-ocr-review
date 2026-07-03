@@ -103,8 +103,9 @@ describe("parseJsonlContent", () => {
   });
 
   it("recognizes ttrpg-ocr-console's full document-bundle export shape", () => {
-    // pages[] entries keyed by `pageNumber`, regions under
-    // pageJsonOutput.content_regions, OCR text nested under ocr.*.
+    // pages[] entries keyed by `pageNumber`, regions under the top-level
+    // contentRegions (the HITL-corrected boxes Chronicles renders), OCR
+    // text nested under ocr.*.
     const content = JSON.stringify({
       document: { title: "Sample Rulebook" },
       content_structure: [{ _id: 1, level_type: "section", heading_text: "Intro" }],
@@ -113,13 +114,13 @@ describe("parseJsonlContent", () => {
           pageNumber: 1,
           imageWidth: 612,
           imageHeight: 792,
-          contentRegions: [{ bbox: { x: 10, y: 10, w: 80, h: 8 }, type: "heading", sequence: 1 }],
+          contentRegions: [
+            { bbox: { x: 10, y: 10, w: 80, h: 8 }, type: "heading", sequence: 1, reviewId: "new-123" },
+            { bbox: { x: 10, y: 20, w: 80, h: 30 }, type: "illustration", sequence: 2, reviewId: "new-124" },
+          ],
           pageJsonOutput: {
             layout: { columns: 1, layout_type: "body_text" },
-            content_regions: [
-              { bbox: { x: 10, y: 10, w: 80, h: 8 }, regionType: "heading", sequence: 1 },
-              { bbox: { x: 10, y: 20, w: 80, h: 30 }, regionType: "illustration", sequence: 2 },
-            ],
+            content_regions: [{ bbox: { x: 10, y: 10, w: 80, h: 8 }, regionType: "header", sequence: 1 }],
           },
           ocr: {
             rawText: "raw",
@@ -135,10 +136,28 @@ describe("parseJsonlContent", () => {
     const record = parsed.get(1);
     expect(record?.labels.ocr_text).toBe("# Chapter One");
     expect(record?.labels.page_layout?.layout_type).toBe("body_text");
-    // Prefers the refined pageJsonOutput.content_regions over the coarser
-    // top-level contentRegions.
+    // Prefers the HITL-corrected top-level contentRegions over the earlier
+    // pageJsonOutput.content_regions pipeline snapshot.
     expect(record?.labels.regions).toHaveLength(2);
     expect(record?.labels.regions?.[1].regionType).toBe("illustration");
+  });
+
+  it("falls back to pageJsonOutput.content_regions when contentRegions is absent", () => {
+    const content = JSON.stringify({
+      pages: [
+        {
+          pageNumber: 1,
+          pageJsonOutput: {
+            content_regions: [{ bbox: { x: 10, y: 10, w: 80, h: 8 }, regionType: "header", sequence: 1 }],
+          },
+          ocr: { rawText: "text" },
+        },
+      ],
+    });
+
+    const parsed = parseJsonlContent(content);
+    expect(parsed.get(1)?.labels.regions).toHaveLength(1);
+    expect(parsed.get(1)?.labels.regions?.[0].regionType).toBe("header");
   });
 
   it("falls back to rawText when markdownText/normalisedText are absent", () => {
