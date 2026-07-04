@@ -3,6 +3,7 @@ import type {
   ComparisonResult,
   CuratedPageRecord,
   DocumentMeta,
+  LlmInteraction,
   NativeTextResult,
   ProviderConfig,
   ProviderConfigInput,
@@ -95,4 +96,6 @@ export const api = {
 
   updateSettings: (patch: Partial<AppSettings>) =>
     request<AppSettings>("/api/settings", { method: "PUT", body: JSON.stringify(patch) }),
+
+  getInteractions: () => request<LlmInteraction[]>("/api/interactions"),
 };

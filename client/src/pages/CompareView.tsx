@@ -3,6 +3,7 @@ import type {
   ComparisonResult,
   CuratedPageRecord,
   DocumentMeta,
+  LlmInteraction,
   NativeTextResult,
   PublicProviderConfig,
   UnlimitedOcrResult,
@@ -30,6 +31,13 @@ export function CompareView({ docId, onBack }: { docId: string; onBack: () => vo
   const [showDiff, setShowDiff] = useState(true);
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [interactions, setInteractions] = useState<LlmInteraction[]>([]);
+  const [showLog, setShowLog] = useState(false);
+  const [expandedInteraction, setExpandedInteraction] = useState<string | null>(null);
+
+  function refreshInteractions() {
+    api.getInteractions().then(setInteractions).catch(() => {});
+  }
 
   useEffect(() => {
     api.getDocument(docId).then(setMeta).catch((e) => setError(e instanceof Error ? e.message : String(e)));
@@ -74,6 +82,7 @@ export function CompareView({ docId, onBack }: { docId: string; onBack: () => vo
       });
       setOcrResult(result);
       setComparison(null);
+      refreshInteractions();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -92,6 +101,7 @@ export function CompareView({ docId, onBack }: { docId: string; onBack: () => vo
         forceRerun,
       });
       setComparison(result);
+      refreshInteractions();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -111,6 +121,13 @@ export function CompareView({ docId, onBack }: { docId: string; onBack: () => vo
           <span className="text-sm font-medium">{meta.pdfFilename}</span>
         </div>
         <div className="flex items-center gap-4 text-sm">
+          <button
+            type="button"
+            onClick={() => { setShowLog((v) => !v); if (!showLog) refreshInteractions(); }}
+            className={`rounded border px-2 py-1 text-xs ${showLog ? "border-indigo-500 text-indigo-300" : "border-slate-600 text-slate-400 hover:text-slate-200"}`}
+          >
+            LLM Log{interactions.length > 0 ? ` (${interactions.length})` : ""}
+          </button>
           {curatedText && (
             <label className="flex items-center gap-1 text-xs text-slate-400">
               <input type="checkbox" checked={showDiff} onChange={(e) => setShowDiff(e.target.checked)} />
@@ -317,6 +334,67 @@ export function CompareView({ docId, onBack }: { docId: string; onBack: () => vo
                   </p>
                 )}
               </div>
+            </section>
+          </div>
+        )}
+
+        {showLog && (
+          <div className="px-4 pb-4">
+            <section className="flex flex-col rounded-lg border border-slate-800">
+              <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
+                <h2 className="text-sm font-medium">LLM Interaction Log</h2>
+                <button
+                  type="button"
+                  onClick={refreshInteractions}
+                  className="rounded border border-slate-600 px-2 py-1 text-xs text-slate-400 hover:text-slate-200"
+                >
+                  Refresh
+                </button>
+              </div>
+              {interactions.length === 0 ? (
+                <div className="p-3 text-xs text-slate-500">
+                  No interactions yet. Run OCR or a comparison to see requests here.
+                </div>
+              ) : (
+                <div className="divide-y divide-slate-800">
+                  {interactions.map((ix) => (
+                    <div key={ix.id} className="text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setExpandedInteraction(expandedInteraction === ix.id ? null : ix.id)}
+                        className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-slate-800/50"
+                      >
+                        <span className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-medium ${ix.type === "ocr" ? "bg-indigo-900/60 text-indigo-300" : "bg-amber-900/60 text-amber-300"}`}>
+                          {ix.type.toUpperCase()}
+                        </span>
+                        <span className="text-slate-300">p{ix.pageNumber}</span>
+                        <span className="text-slate-500">{ix.model}</span>
+                        <span className="text-slate-500">{ix.latencyMs}ms</span>
+                        <span className="ml-auto text-slate-600">{new Date(ix.timestamp).toLocaleTimeString()}</span>
+                        <span className="text-slate-600">{expandedInteraction === ix.id ? "▾" : "▸"}</span>
+                      </button>
+                      {expandedInteraction === ix.id && (
+                        <div className="space-y-3 border-t border-slate-800/50 bg-slate-900/30 px-3 py-3">
+                          <div>
+                            <h4 className="mb-1 font-medium text-slate-400">Request messages</h4>
+                            {ix.messages.map((m, mi) => (
+                              <div key={mi} className="mb-2 rounded border border-slate-700/50 bg-slate-950/50 p-2">
+                                <pre className="max-h-60 overflow-auto whitespace-pre-wrap font-sans text-slate-300">{m.content}</pre>
+                              </div>
+                            ))}
+                          </div>
+                          <div>
+                            <h4 className="mb-1 font-medium text-slate-400">Response</h4>
+                            <div className="rounded border border-slate-700/50 bg-slate-950/50 p-2">
+                              <pre className="max-h-80 overflow-auto whitespace-pre-wrap font-sans text-slate-300">{ix.responseText}</pre>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </section>
           </div>
         )}

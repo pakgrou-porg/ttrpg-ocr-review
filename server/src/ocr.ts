@@ -1,14 +1,36 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type {
   ComparisonResult,
   CuratedPageRecord,
+  LlmInteraction,
+  LlmInteractionMessage,
   ProviderConfig,
   UnlimitedOcrResult,
 } from "@ttrpg-ocr-review/shared";
 import { comparisonsDir, ensureDir, ocrRunsDir } from "./paths.js";
+
+const MAX_INTERACTIONS = 50;
+const interactionLog: LlmInteraction[] = [];
+
+function pushInteraction(entry: LlmInteraction) {
+  interactionLog.push(entry);
+  if (interactionLog.length > MAX_INTERACTIONS) interactionLog.shift();
+}
+
+export function getInteractions(): LlmInteraction[] {
+  return [...interactionLog].reverse();
+}
+
+function summariseContent(content: Array<Record<string, unknown>>): LlmInteractionMessage[] {
+  return content.map((c) => {
+    if (c.type === "text") return { role: "user", content: c.text as string };
+    if (c.type === "image_url") return { role: "user", content: "[IMAGE: base64 PNG]" };
+    return { role: "user", content: JSON.stringify(c).slice(0, 200) };
+  });
+}
 
 export function buildRegionsHintText(curated: CuratedPageRecord | null): string {
   const regions = curated?.labels?.regions;
@@ -72,7 +94,17 @@ interface ChatResponse {
 // which just leaves the UI stuck with no feedback. Fail clearly instead.
 const CHAT_TIMEOUT_MS = 120_000;
 
-async function callVisionChat(provider: ProviderConfig, content: Array<Record<string, unknown>>): Promise<ChatResponse> {
+interface InteractionMeta {
+  type: "ocr" | "comparison";
+  docId: string;
+  pageNumber: number;
+}
+
+async function callVisionChat(
+  provider: ProviderConfig,
+  content: Array<Record<string, unknown>>,
+  meta: InteractionMeta,
+): Promise<ChatResponse> {
   const url = `${provider.baseUrl}${provider.apiPrefix}/chat/completions`;
   const started = Date.now();
   let res: Response;
@@ -103,7 +135,24 @@ async function callVisionChat(provider: ProviderConfig, content: Array<Record<st
   }
 
   const json = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-  return { text: json.choices?.[0]?.message?.content ?? "", latencyMs: Date.now() - started };
+  const text = json.choices?.[0]?.message?.content ?? "";
+  const latencyMs = Date.now() - started;
+
+  pushInteraction({
+    id: randomUUID(),
+    type: meta.type,
+    timestamp: new Date().toISOString(),
+    docId: meta.docId,
+    pageNumber: meta.pageNumber,
+    providerName: provider.name,
+    model: provider.model,
+    messages: summariseContent(content),
+    responseText: text,
+    latencyMs,
+    cached: false,
+  });
+
+  return { text, latencyMs };
 }
 
 interface RunOcrInput {
@@ -135,7 +184,11 @@ export async function runUnlimitedOcr(input: RunOcrInput): Promise<UnlimitedOcrR
     image_url: { url: `data:image/png;base64,${input.imagePng.toString("base64")}` },
   });
 
-  const { text, latencyMs } = await callVisionChat(input.provider, content);
+  const { text, latencyMs } = await callVisionChat(input.provider, content, {
+    type: "ocr",
+    docId: input.docId,
+    pageNumber: input.pageNumber,
+  });
 
   const result: UnlimitedOcrResult = {
     pageNumber: input.pageNumber,
@@ -186,7 +239,11 @@ export async function runComparison(input: RunComparisonInput): Promise<Comparis
     { type: "image_url", image_url: { url: `data:image/png;base64,${input.imagePng.toString("base64")}` } },
   ];
 
-  const { text, latencyMs } = await callVisionChat(input.provider, content);
+  const { text, latencyMs } = await callVisionChat(input.provider, content, {
+    type: "comparison",
+    docId: input.docId,
+    pageNumber: input.pageNumber,
+  });
 
   const result: ComparisonResult = {
     pageNumber: input.pageNumber,

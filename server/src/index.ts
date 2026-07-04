@@ -5,6 +5,7 @@ import { MulterError } from "multer";
 import documentsRouter from "./routes/documents.js";
 import providersRouter from "./routes/providers.js";
 import settingsRouter from "./routes/settings.js";
+import { getInteractions } from "./ocr.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Deliberately not process.env.PORT: that var is commonly set by whatever
@@ -17,6 +18,7 @@ const app = express();
 app.use(express.json({ limit: "2mb" }));
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
+app.get("/api/interactions", (_req, res) => res.json(getInteractions()));
 app.use("/api/documents", documentsRouter);
 app.use("/api/providers", providersRouter);
 app.use("/api/settings", settingsRouter);

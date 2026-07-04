@@ -114,6 +114,25 @@ export interface ComparisonResult {
   cached: boolean;
 }
 
+export interface LlmInteractionMessage {
+  role: string;
+  content: string;
+}
+
+export interface LlmInteraction {
+  id: string;
+  type: "ocr" | "comparison";
+  timestamp: string;
+  docId: string;
+  pageNumber: number;
+  providerName: string;
+  model: string;
+  messages: LlmInteractionMessage[];
+  responseText: string;
+  latencyMs: number;
+  cached: boolean;
+}
+
 export const DEFAULT_OCR_PROMPT =
   "Transcribe every word of text visible on this page image, in reading order across columns. " +
   "Preserve paragraph breaks.\n\n" +
