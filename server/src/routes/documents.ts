@@ -1,5 +1,5 @@
 import { unlink } from "node:fs/promises";
-import { Router, type Request } from "express";
+import { Router } from "express";
 import multer from "multer";
 import type { AppSettings, ProviderConfig } from "@ttrpg-ocr-review/shared";
 import { createDocument, getCuratedPage, listDocuments, readMeta } from "../documentStore.js";
@@ -9,6 +9,16 @@ import { runComparison, runUnlimitedOcr } from "../ocr.js";
 import { ensureDir, TMP_DIR } from "../paths.js";
 
 await ensureDir(TMP_DIR);
+
+// Express 4 does not catch errors thrown by async route handlers — an
+// unhandled rejection crashes the Node.js process (Node 15+). Wrap every
+// async handler so any thrown error is forwarded to Express's error
+// middleware instead. Uses `any` for the args so TypeScript still applies
+// route-level param inference inside each callback.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function ah(fn: (...args: any[]) => Promise<void>): (...args: any[]) => void {
+  return (...args) => { fn(...args).catch(args[2]); };
+}
 
 // Streams uploads straight to disk (TMP_DIR) instead of buffering the whole
 // file in process memory — scanned rulebook PDFs can be large. 1GB is a
@@ -37,9 +47,9 @@ async function resolveProvider(
   return { provider };
 }
 
-router.get("/", async (_req, res) => {
+router.get("/", ah(async (_req, res) => {
   res.json(await listDocuments());
-});
+}));
 
 router.post(
   "/",
@@ -47,7 +57,7 @@ router.post(
     { name: "pdf", maxCount: 1 },
     { name: "jsonl", maxCount: 1 },
   ]),
-  async (req: Request, res) => {
+  ah(async (req, res) => {
     const files = req.files as Record<string, Express.Multer.File[]> | undefined;
     const pdfFile = files?.pdf?.[0];
     const jsonlFile = files?.jsonl?.[0];
@@ -63,19 +73,19 @@ router.post(
       jsonlFilename: jsonlFile ? jsonlFile.originalname : null,
     });
     res.status(201).json(meta);
-  },
+  }),
 );
 
-router.get("/:id", async (req, res) => {
+router.get("/:id", ah(async (req, res) => {
   const meta = await readMeta(req.params.id);
   if (!meta) {
     res.status(404).json({ error: "Document not found" });
     return;
   }
   res.json(meta);
-});
+}));
 
-router.get("/:id/pages/:n/image", async (req, res) => {
+router.get("/:id/pages/:n/image", ah(async (req, res) => {
   const meta = await readMeta(req.params.id);
   if (!meta) {
     res.status(404).json({ error: "Document not found" });
@@ -86,22 +96,22 @@ router.get("/:id/pages/:n/image", async (req, res) => {
   res.setHeader("Content-Type", "image/png");
   res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
   res.send(buffer);
-});
+}));
 
-router.get("/:id/pages/:n/native-text", async (req, res) => {
+router.get("/:id/pages/:n/native-text", ah(async (req, res) => {
   const meta = await readMeta(req.params.id);
   if (!meta) {
     res.status(404).json({ error: "Document not found" });
     return;
   }
   res.json(await getNativeText(req.params.id, Number(req.params.n)));
-});
+}));
 
-router.get("/:id/pages/:n/curated", async (req, res) => {
+router.get("/:id/pages/:n/curated", ah(async (req, res) => {
   res.json(await getCuratedPage(req.params.id, Number(req.params.n)));
-});
+}));
 
-router.post("/:id/pages/:n/unlimited-ocr", async (req, res) => {
+router.post("/:id/pages/:n/unlimited-ocr", ah(async (req, res) => {
   const meta = await readMeta(req.params.id);
   if (!meta) {
     res.status(404).json({ error: "Document not found" });
@@ -131,9 +141,9 @@ router.post("/:id/pages/:n/unlimited-ocr", async (req, res) => {
     forceRerun: Boolean(req.body?.forceRerun),
   });
   res.json(result);
-});
+}));
 
-router.post("/:id/pages/:n/compare", async (req, res) => {
+router.post("/:id/pages/:n/compare", ah(async (req, res) => {
   const meta = await readMeta(req.params.id);
   if (!meta) {
     res.status(404).json({ error: "Document not found" });
@@ -175,6 +185,6 @@ router.post("/:id/pages/:n/compare", async (req, res) => {
     forceRerun: Boolean(req.body?.forceRerun),
   });
   res.json(result);
-});
+}));
 
 export default router;

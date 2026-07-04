@@ -1,5 +1,6 @@
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
+import { pipeline } from "node:stream/promises";
 import parserStream from "stream-json";
 import { pick } from "stream-json/filters/pick.js";
 import { streamArray } from "stream-json/streamers/stream-array.js";
@@ -187,18 +188,15 @@ export function parseJsonlContent(content: string): Map<number, CuratedPageRecor
 
 // Streams a top-level JSON array so individual elements are parsed one at a
 // time rather than materializing the whole array up front.
-function streamTopLevelArray(filePath: string): Promise<Map<number, CuratedPageRecord>> {
-  return new Promise((resolve, reject) => {
-    const byPage = new Map<number, CuratedPageRecord>();
-    const pipeline = streamArray.withParserAsStream();
-    createReadStream(filePath).pipe(pipeline);
-    pipeline.on("data", ({ value }: { value: unknown }) => {
-      const record = sanitizeRecord(value);
-      if (record) byPage.set(record.source.page_number, record);
-    });
-    pipeline.on("end", () => resolve(byPage));
-    pipeline.on("error", reject);
+async function streamTopLevelArray(filePath: string): Promise<Map<number, CuratedPageRecord>> {
+  const byPage = new Map<number, CuratedPageRecord>();
+  const arr = streamArray.withParserAsStream();
+  arr.on("data", ({ value }: { value: unknown }) => {
+    const record = sanitizeRecord(value);
+    if (record) byPage.set(record.source.page_number, record);
   });
+  await pipeline(createReadStream(filePath), arr);
+  return byPage;
 }
 
 // Streams every top-level array found in a wrapper object (e.g.
@@ -210,38 +208,34 @@ function streamTopLevelArray(filePath: string): Promise<Map<number, CuratedPageR
 // the last element of) very large arrays — piping through Pick + streamArray
 // instead keeps peak memory to a single element, and was verified correct
 // against a real ~640MB fixture where the streamObject approach was not.
-function streamTopLevelArrays(filePath: string): Promise<Map<number, CuratedPageRecord>> {
-  return new Promise((resolve, reject) => {
-    const byPage = new Map<number, CuratedPageRecord>();
-    const pipeline = createReadStream(filePath)
-      .pipe(parserStream())
-      .pipe(pick.asStream({ filter: (stack: unknown[], chunk: { name: string }) => stack.length === 1 && chunk.name === "startArray" }))
-      .pipe(streamArray.asStream());
-    pipeline.on("data", ({ value }: { value: unknown }) => {
-      const record = sanitizeRecord(value);
-      if (record) byPage.set(record.source.page_number, record);
-    });
-    pipeline.on("end", () => resolve(byPage));
-    pipeline.on("error", reject);
+// node:stream/promises pipeline() attaches error handlers to every stage
+// so an error in parserStream or pick doesn't become an unhandled event.
+async function streamTopLevelArrays(filePath: string): Promise<Map<number, CuratedPageRecord>> {
+  const byPage = new Map<number, CuratedPageRecord>();
+  const parser = parserStream();
+  const picker = pick.asStream({ filter: (stack: unknown[], chunk: { name: string }) => stack.length === 1 && chunk.name === "startArray" });
+  const arr = streamArray.asStream();
+  arr.on("data", ({ value }: { value: unknown }) => {
+    const record = sanitizeRecord(value);
+    if (record) byPage.set(record.source.page_number, record);
   });
+  await pipeline(createReadStream(filePath), parser, picker, arr);
+  return byPage;
 }
 
 // Fallback for wrapper objects with no top-level array (e.g. an object
 // keyed by page id: {"1": {...}, "2": {...}}) — each top-level property
 // here is a single record, not a bulky array, so the streamObject
 // materialize-per-property approach is safe.
-function streamTopLevelObjectValues(filePath: string): Promise<Map<number, CuratedPageRecord>> {
-  return new Promise((resolve, reject) => {
-    const byPage = new Map<number, CuratedPageRecord>();
-    const pipeline = streamObject.withParserAsStream();
-    createReadStream(filePath).pipe(pipeline);
-    pipeline.on("data", ({ value }: { key: string; value: unknown }) => {
-      const record = sanitizeRecord(value);
-      if (record) byPage.set(record.source.page_number, record);
-    });
-    pipeline.on("end", () => resolve(byPage));
-    pipeline.on("error", reject);
+async function streamTopLevelObjectValues(filePath: string): Promise<Map<number, CuratedPageRecord>> {
+  const byPage = new Map<number, CuratedPageRecord>();
+  const obj = streamObject.withParserAsStream();
+  obj.on("data", ({ value }: { key: string; value: unknown }) => {
+    const record = sanitizeRecord(value);
+    if (record) byPage.set(record.source.page_number, record);
   });
+  await pipeline(createReadStream(filePath), obj);
+  return byPage;
 }
 
 async function streamTopLevelObject(filePath: string): Promise<Map<number, CuratedPageRecord>> {
