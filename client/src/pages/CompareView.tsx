@@ -14,6 +14,18 @@ import { DiffText } from "../components/DiffText";
 import { PageImage } from "../components/PageImage";
 import { parseOcrRegions } from "../ocrRegions";
 
+// Strips the model's native "type [x1, y1, x2, y2]content" bbox prefix from
+// each line so the text is comparable against plain curated OCR output.
+// Pure region markers with no text content (e.g. "image [0,46,999,134]") are
+// dropped entirely. The raw response is always preserved in the LLM log.
+function stripOcrBboxPrefixes(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => line.replace(/^[a-z_]+ \[\d+,\s*\d+,\s*\d+,\s*\d+\]/, "").trimStart())
+    .filter((line) => line.trim() !== "")
+    .join("\n");
+}
+
 export function CompareView({ docId, onBack }: { docId: string; onBack: () => void }) {
   const [meta, setMeta] = useState<DocumentMeta | null>(null);
   const [page, setPage] = useState(1);
@@ -31,6 +43,10 @@ export function CompareView({ docId, onBack }: { docId: string; onBack: () => vo
   const [showDiff, setShowDiff] = useState(true);
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [promptOverride, setPromptOverride] = useState("");
+  const [defaultPrompt, setDefaultPrompt] = useState("");
+  const [showPromptEditor, setShowPromptEditor] = useState(false);
+  const [showRawOcr, setShowRawOcr] = useState(false);
   const [interactions, setInteractions] = useState<LlmInteraction[]>([]);
   const [showLog, setShowLog] = useState(false);
   const [expandedInteraction, setExpandedInteraction] = useState<string | null>(null);
@@ -45,6 +61,8 @@ export function CompareView({ docId, onBack }: { docId: string; onBack: () => vo
       setProviders(p);
       setActiveProviderId(s.activeProviderId);
       setIncludeRegionsHint(s.includeRegionsHintDefault);
+      setPromptOverride(s.ocrPrompt || "");
+      setDefaultPrompt(s.ocrPrompt || "");
     });
   }, [docId]);
 
@@ -79,6 +97,7 @@ export function CompareView({ docId, onBack }: { docId: string; onBack: () => vo
         providerId: activeProviderId,
         includeRegionsHint,
         forceRerun,
+        prompt: promptOverride || undefined,
       });
       setOcrResult(result);
       setComparison(null);
@@ -247,6 +266,16 @@ export function CompareView({ docId, onBack }: { docId: string; onBack: () => vo
                     Overlay ({ocrRegions.length})
                   </label>
                 )}
+                {ocrResult && (
+                  <label className="flex items-center gap-1 text-xs text-slate-400">
+                    <input
+                      type="checkbox"
+                      checked={showRawOcr}
+                      onChange={(e) => setShowRawOcr(e.target.checked)}
+                    />
+                    Raw
+                  </label>
+                )}
                 <label className="flex items-center gap-1 text-xs text-slate-400">
                   <input
                     type="checkbox"
@@ -282,6 +311,39 @@ export function CompareView({ docId, onBack }: { docId: string; onBack: () => vo
                 {ocrBusy ? "Running…" : ocrResult ? "Run again" : "Run OCR"}
               </button>
             </div>
+            <div className="shrink-0 border-b border-slate-800">
+              <button
+                type="button"
+                onClick={() => setShowPromptEditor((v) => !v)}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-slate-500 hover:text-slate-300"
+              >
+                <span>Prompt</span>
+                {promptOverride !== defaultPrompt && (
+                  <span className="rounded bg-amber-900/50 px-1 py-0.5 text-[10px] text-amber-400">modified</span>
+                )}
+                <span className="ml-auto">{showPromptEditor ? "▾" : "▸"}</span>
+              </button>
+              {showPromptEditor && (
+                <div className="border-t border-slate-800/50 p-2">
+                  <textarea
+                    value={promptOverride}
+                    onChange={(e) => setPromptOverride(e.target.value)}
+                    rows={5}
+                    className="w-full rounded border border-slate-700 bg-slate-900 p-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
+                    placeholder="OCR prompt…"
+                  />
+                  {promptOverride !== defaultPrompt && (
+                    <button
+                      type="button"
+                      onClick={() => setPromptOverride(defaultPrompt)}
+                      className="mt-1 text-[10px] text-slate-500 hover:text-slate-300"
+                    >
+                      Reset to default
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
             <div className="flex-1 overflow-auto p-3 text-xs">
               {ocrResult ? (
                 <>
@@ -290,9 +352,14 @@ export function CompareView({ docId, onBack }: { docId: string; onBack: () => vo
                   </p>
                   <pre className="whitespace-pre-wrap font-sans">
                     {showDiff && curatedText ? (
-                      <DiffText baseline={curatedText} text={ocrResult.text} />
-                    ) : (
+                      <DiffText
+                        baseline={curatedText}
+                        text={showRawOcr ? ocrResult.text : stripOcrBboxPrefixes(ocrResult.text)}
+                      />
+                    ) : showRawOcr ? (
                       ocrResult.text
+                    ) : (
+                      stripOcrBboxPrefixes(ocrResult.text)
                     )}
                   </pre>
                 </>
