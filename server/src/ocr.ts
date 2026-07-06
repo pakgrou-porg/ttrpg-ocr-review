@@ -92,7 +92,7 @@ interface ChatResponse {
 // Vision inference on local hardware can be slow, but it shouldn't hang the
 // request indefinitely — undici's default header timeout is ~5 minutes,
 // which just leaves the UI stuck with no feedback. Fail clearly instead.
-const CHAT_TIMEOUT_MS = 120_000;
+const CHAT_TIMEOUT_MS = 300_000;
 
 interface InteractionMeta {
   type: "ocr" | "comparison";
