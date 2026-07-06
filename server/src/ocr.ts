@@ -119,7 +119,6 @@ async function callVisionChat(
         model: provider.model,
         temperature: 0,
         max_tokens: 8192,
-        repetition_penalty: 1.05,
         messages: [{ role: "user", content }],
       }),
       signal: AbortSignal.timeout(CHAT_TIMEOUT_MS),
